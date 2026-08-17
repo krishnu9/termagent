@@ -1,0 +1,28 @@
+[project]
+name = "termagent"
+version = "0.1.0"
+description = "A small terminal coding agent"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-ai",
+    "textual",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[project.scripts]
+termagent = "termagent.__main__:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
