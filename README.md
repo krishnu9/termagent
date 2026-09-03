@@ -17,7 +17,10 @@ cp .env.example .env
 ```bash
 python -m termagent
 python -m termagent --workspace /path/to/repo
+python -m termagent --yes --workspace /path/to/repo
 ```
+
+`write_file` and `run_shell` ask for confirmation in the TUI (`y` / `n`) before they run. `read_file` and `list_dir` do not. `--yes` (`-y`) auto-approves writes and shell for demos or trusted runs.
 
 `OPENAI_API_KEY` is required. `AGENT_MODEL` defaults to `gpt-4o-mini`. Any OpenAI-compatible provider works if you also set `OPENAI_BASE_URL` (see pydantic-ai OpenAI provider).
 
