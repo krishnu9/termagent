@@ -19,7 +19,10 @@ cp .env.example .env
 ```bash
 python -m termagent
 python -m termagent --workspace ~/Developer/my-app
+python -m termagent --yes --workspace ~/Developer/my-app
 ```
+
+`write_file` and `run_shell` ask for confirmation in the TUI (`y` / `n`) before they run. `read_file`, `list_dir`, and `search_text` do not. `--yes` (`-y`) auto-approves writes and shell for demos or trusted runs.
 
 With no flag, the workspace is the **current directory**. If you start the app from this repo, it will edit this repo. Point `--workspace` at another folder; if that path does not exist, termagent creates it:
 
@@ -88,11 +91,11 @@ CLI / config
 
 | File | Job |
 |------|-----|
-| `src/termagent/__main__.py` | Parse `--workspace`, load config, start TUI |
-| `src/termagent/config.py` | API key, model, base URL, workspace path |
-| `src/termagent/tui.py` | Transcript + input; does **not** implement tools |
+| `src/termagent/__main__.py` | Parse `--workspace` / `--yes`, load config, start TUI |
+| `src/termagent/config.py` | API key, model, base URL, workspace path, `auto_approve` |
+| `src/termagent/tui.py` | Transcript + input + permission modal; does **not** implement tools |
 | `src/termagent/agent.py` | System prompt, tool registration, session history |
-| `src/termagent/tools.py` | Side effects (disk/shell); always return `str` |
+| `src/termagent/tools.py` | Side effects (disk/shell/search); always return `str` |
 | `src/termagent/sandbox.py` | Path confinement |
 
 UI, orchestration, and side effects are separate. Tools can be tested without a TUI. The loop can be tested with a fake model and no API key.
@@ -101,7 +104,7 @@ UI, orchestration, and side effects are separate. Tools can be tested without a 
 
 `CodingSession.run` is one user turn. Inside it, PydanticAI may round-trip the model many times:
 
-1. Send system instructions, history, the user message, and JSON schemas derived from the four tool functions (docstrings become tool descriptions).
+1. Send system instructions, history, the user message, and JSON schemas derived from the tool functions (docstrings become tool descriptions).
 2. If the model returns tool calls: execute them, append results to history, call the model again.
 3. Stop when the model returns text with no tool calls.
 
@@ -115,16 +118,9 @@ History is **in-memory only**. `/reset` drops it. Nothing is persisted across re
 4. Tool results go back to the model until it answers.
 5. The TUI prints `agent: …` and re-enables input. API failures show as `error:`; history is kept.
 
-## Tools
+## Tools (loop details)
 
-| Tool | Behavior |
-|------|----------|
-| `read_file` | Read a UTF-8 text file |
-| `write_file` | Create or overwrite a UTF-8 text file |
-| `list_dir` | List directory entries |
-| `run_shell` | `subprocess` with `cwd=workspace`, 30s timeout; returns stdout, stderr, exit code |
-
-Tools take `RunContext[AgentDeps]` so they see the workspace without globals. They **never raise into the TUI**. A missing file or a path escape becomes a string the model can read and recover from. Errors are part of the agent's observation stream, not control-flow exceptions.
+The table in **Tools** above is the product surface. Tools take `RunContext[AgentDeps]` so they see the workspace without globals. They **never raise into the TUI**. A missing file, a path escape, or a denied write/shell becomes a string the model can read and recover from. Errors are part of the agent's observation stream, not control-flow exceptions.
 
 `run_shell` treats a non-zero exit as a successful tool result — failing tests are information, not a crash.
 
@@ -140,28 +136,22 @@ File tools resolve paths with `Path.resolve()` and reject anything whose resolve
 - **OpenAI-compatible provider.** Same client for OpenAI, OpenRouter, Groq. Model is swappable; tools are not.
 - **TUI is a renderer.** Live tool traces use `AgentDeps.on_tool`, not parsing of the model API.
 - **Tests use `FunctionModel`.** A fake model first emits `list_dir`, then a final sentence. CI never hits a live API (`ALLOW_MODEL_REQUESTS = False`).
-- **YAGNI for v1.** No streaming, git, MCP, persistence, or permission prompts. Those sit on top of the same loop.
+- **YAGNI for extras.** Git, MCP, persistence, and subagents still sit on top of the same loop.
 
 ## Known limitations
 
-- No token streaming
+- Token streaming is next (merge `run_stream` into the TUI)
 - No git awareness
 - No web search, MCP, or plugins
 - No transcript persistence across restarts
-- No confirm-before-write / confirm-before-shell
 - No multi-agent / subagents
 - Path checks only; shell is not jailed
-- File tools do not cap size; a huge file can blow the context window
 - One agent run at a time (input disabled while working)
 
 ## Possible improvements
 
-Highest leverage first, all on the same loop:
+Highest leverage first, all on the same loop. Items 1–4 are merged (mkdir workspace, permission prompts + `--yes`, context hygiene / `search_text`). Streaming tokens is next.
 
-1. **Create `--workspace` if missing** so a new project is one command.
-2. **Permission prompts** for `write_file` / `run_shell` (and a `--yes` escape).
-3. **Streaming** tokens into the transcript (`run_stream`) — UX, not a new architecture.
-4. **Context hygiene:** skip `node_modules` / `.git`, cap `read_file` size, maybe ripgrep instead of dumping whole files.
 5. **Git tools** (`git_status`, `git_diff`) so the model sees repo state.
 6. **Session persistence** (save/load PydanticAI message history).
 7. **Shell confinement** (reject `cd /`, or run in a subprocess with tighter limits). Do not pretend the current sandbox is a jail.

@@ -17,7 +17,7 @@ from termagent.tools import (
 
 def _ctx(workspace: Path) -> RunContext[AgentDeps]:
     return RunContext(
-        deps=AgentDeps(workspace=workspace),
+        deps=AgentDeps(workspace=workspace, auto_approve=True),
         model=TestModel(),
         usage=RunUsage(),
         tool_name="test",

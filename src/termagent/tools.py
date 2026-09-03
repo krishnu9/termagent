@@ -30,10 +30,16 @@ IGNORED_DIR_NAMES = frozenset(
 )
 
 
+ApproveFn = Callable[[str, dict[str, object]], bool]
+GATED_TOOLS = frozenset({"write_file", "run_shell"})
+
+
 @dataclass
 class AgentDeps:
     workspace: Path
     on_tool: Callable[[str, dict[str, object]], None] | None = field(default=None)
+    approve: ApproveFn | None = field(default=None)
+    auto_approve: bool = False
 
 
 def _notify(ctx: RunContext[AgentDeps], name: str, args: dict[str, object]) -> None:
@@ -43,6 +49,16 @@ def _notify(ctx: RunContext[AgentDeps], name: str, args: dict[str, object]) -> N
 
 def _error(exc: BaseException | str) -> str:
     return f"error: {exc}"
+
+
+def _allowed(ctx: RunContext[AgentDeps], name: str, args: dict[str, object]) -> bool:
+    if name not in GATED_TOOLS:
+        return True
+    if ctx.deps.auto_approve:
+        return True
+    if ctx.deps.approve is None:
+        return False
+    return bool(ctx.deps.approve(name, args))
 
 
 def _is_ignored_dir_name(name: str) -> bool:
@@ -74,7 +90,10 @@ def read_file(ctx: RunContext[AgentDeps], path: str) -> str:
 
 def write_file(ctx: RunContext[AgentDeps], path: str, content: str) -> str:
     """Create or overwrite a UTF-8 text file inside the workspace."""
-    _notify(ctx, "write_file", {"path": path})
+    args: dict[str, object] = {"path": path}
+    _notify(ctx, "write_file", args)
+    if not _allowed(ctx, "write_file", {**args, "content": content}):
+        return _error("user denied write_file")
     try:
         target = resolve_in_workspace(ctx.deps.workspace, path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +127,10 @@ def list_dir(ctx: RunContext[AgentDeps], path: str) -> str:
 
 def run_shell(ctx: RunContext[AgentDeps], command: str) -> str:
     """Run a shell command with cwd set to the workspace. Timeout is SHELL_TIMEOUT seconds."""
-    _notify(ctx, "run_shell", {"command": command})
+    args: dict[str, object] = {"command": command}
+    _notify(ctx, "run_shell", args)
+    if not _allowed(ctx, "run_shell", args):
+        return _error("user denied run_shell")
     try:
         completed = subprocess.run(
             command,

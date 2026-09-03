@@ -20,6 +20,8 @@ class Config:
     workspace: Path
     base_url: str | None = None
 
+    auto_approve: bool = False
+
 
 def _infer_base_url(api_key: str, explicit: str | None) -> str | None:
     if explicit:
@@ -29,7 +31,9 @@ def _infer_base_url(api_key: str, explicit: str | None) -> str | None:
     return None
 
 
-def load_config(workspace: Path | None = None) -> Config:
+def load_config(
+    workspace: Path | None = None, *, auto_approve: bool = False
+) -> Config:
     load_dotenv()
     api_key = os.environ.get("OPENAI_API_KEY", "").strip() or os.environ.get(
         "OPENROUTER_API_KEY", ""
@@ -48,4 +52,5 @@ def load_config(workspace: Path | None = None) -> Config:
         model=model,
         workspace=root,
         base_url=_infer_base_url(api_key, explicit),
+        auto_approve=auto_approve,
     )
