@@ -5,10 +5,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Header, Input, RichLog
 from textual.worker import Worker, WorkerState
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
-from termagent.agent import CodingSession, build_agent
+from termagent.agent import CodingSession, build_agent, create_chat_model
 from termagent.config import Config
 from termagent.tools import AgentDeps
 
@@ -96,10 +94,6 @@ class TermagentApp(App[None]):
 
 
 def run_app(config: Config) -> None:
-    model = OpenAIChatModel(
-        config.model,
-        provider=OpenAIProvider(api_key=config.api_key),
-    )
     deps = AgentDeps(workspace=config.workspace)
-    session = CodingSession(build_agent(model), deps)
+    session = CodingSession(build_agent(create_chat_model(config)), deps)
     TermagentApp(session, config).run()

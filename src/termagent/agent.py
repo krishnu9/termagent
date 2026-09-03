@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.models import Model
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
+from termagent.config import Config
 from termagent.tools import AgentDeps, list_dir, read_file, run_shell, write_file
 
 INSTRUCTIONS = """You are a coding agent working in a local workspace.
 Use tools to inspect and edit files. Stay inside the workspace.
 Prefer small, targeted edits. After finishing, summarize what you did."""
+
+
+def create_chat_model(config: Config) -> OpenAIChatModel:
+    provider = OpenAIProvider(api_key=config.api_key, base_url=config.base_url)
+    return OpenAIChatModel(config.model, provider=provider)
 
 
 def build_agent(model: str | Model) -> Agent[AgentDeps, str]:
