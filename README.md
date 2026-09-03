@@ -18,13 +18,12 @@ cp .env.example .env
 
 ```bash
 python -m termagent
-python -m termagent --workspace /path/to/repo
+python -m termagent --workspace ~/Developer/my-app
 ```
 
-With no flag, the workspace is the **current directory**. If you start the app from this repo, it will edit this repo. Point `--workspace` at another folder (create it first if needed):
+With no flag, the workspace is the **current directory**. If you start the app from this repo, it will edit this repo. Point `--workspace` at another folder; if that path does not exist, termagent creates it:
 
 ```bash
-mkdir -p ~/Developer/my-app
 python -m termagent --workspace ~/Developer/my-app
 ```
 

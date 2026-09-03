@@ -75,3 +75,38 @@ def test_create_chat_model_uses_openrouter_base(tmp_path: Path) -> None:
     model = create_chat_model(cfg)
     assert model.model_name == "z-ai/glm-5.3-flash"
     assert "openrouter.ai" in model.provider.base_url
+
+
+def test_missing_workspace_dir_is_created(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    missing = tmp_path / "new-project"
+    assert not missing.exists()
+    cfg = load_config(missing)
+    assert missing.is_dir()
+    assert cfg.workspace == missing.resolve()
+
+
+def test_existing_workspace_dir_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    existing = tmp_path / "repo"
+    existing.mkdir()
+    marker = existing / "keep-me.txt"
+    marker.write_text("ok", encoding="utf-8")
+    cfg = load_config(existing)
+    assert cfg.workspace == existing.resolve()
+    assert marker.read_text(encoding="utf-8") == "ok"
+    assert list(existing.iterdir()) == [marker]
+
+
+def test_workspace_path_that_is_a_file_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    file_path = tmp_path / "not-a-dir"
+    file_path.write_text("nope", encoding="utf-8")
+    with pytest.raises(ConfigError, match="not a directory"):
+        load_config(file_path)

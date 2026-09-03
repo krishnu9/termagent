@@ -39,6 +39,10 @@ def load_config(workspace: Path | None = None) -> Config:
     model = os.environ.get("AGENT_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
     explicit = os.environ.get("OPENAI_BASE_URL", "").strip() or None
     root = (workspace if workspace is not None else Path.cwd()).resolve()
+    if workspace is not None:
+        if root.exists() and not root.is_dir():
+            raise ConfigError(f"workspace {root} exists and is not a directory")
+        root.mkdir(parents=True, exist_ok=True)
     return Config(
         api_key=api_key,
         model=model,
