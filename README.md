@@ -1,6 +1,6 @@
 # termagent
 
-A small terminal coding agent. Type a task; watch it read/write files and run shell commands inside a workspace.
+A small terminal coding agent. Type a task; watch it read/write files and run shell commands inside a workspace. Assistant replies **stream into the TUI** as tokens arrive (`agent:` line updates live). Tool traces (`→ name args`) still appear as they run.
 
 ## Setup
 
