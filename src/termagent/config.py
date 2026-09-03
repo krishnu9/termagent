@@ -19,7 +19,6 @@ class Config:
     model: str
     workspace: Path
     base_url: str | None = None
-
     auto_approve: bool = False
 
 
