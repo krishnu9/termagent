@@ -2,7 +2,7 @@
 
 A small terminal coding agent. Type a task; a language model calls tools; Python executes those tools on disk; results go back to the model until it answers in plain text.
 
-This is a learning project for the **tool loop** used by agents like Cursor and Claude Code. It is not a product clone.
+This is a learning project for the **tool loop** used by agents like Cursor and Claude Code. It is not a product clone. Assistant replies **stream into the TUI** as tokens arrive (`agent:` line updates live). Tool traces (`→ name args`) still appear as they run.
 
 ## Setup
 
@@ -82,9 +82,9 @@ ChatGPT is one request → one answer. An agent is a **state machine** whose tra
 ```
 CLI / config
     → Textual TUI          # renderer only; one run at a time
-        → CodingSession    # history + agent.run()
+        → CodingSession    # history + agent.run() / run_stream()
             → PydanticAI   # model I/O + tool dispatch
-                → tools    # read / write / list / shell
+                → tools    # read / write / list / search / shell
                     → sandbox   # path must stay under workspace
                 → OpenAI-compatible HTTP  # OpenAI, OpenRouter, …
 ```
@@ -102,7 +102,7 @@ UI, orchestration, and side effects are separate. Tools can be tested without a 
 
 ## The agent loop
 
-`CodingSession.run` is one user turn. Inside it, PydanticAI may round-trip the model many times:
+`CodingSession.run` / `run_stream` is one user turn. The TUI uses `run_stream` so the `agent:` line updates as tokens arrive. Inside it, PydanticAI may round-trip the model many times:
 
 1. Send system instructions, history, the user message, and JSON schemas derived from the tool functions (docstrings become tool descriptions).
 2. If the model returns tool calls: execute them, append results to history, call the model again.
@@ -113,10 +113,10 @@ History is **in-memory only**. `/reset` drops it. Nothing is persisted across re
 ## A single turn
 
 1. `python -m termagent --workspace ~/Developer/my-app` loads config and builds `AgentDeps(workspace=…)` plus a `CodingSession`.
-2. You type a task. Input is **disabled** so two loops cannot overlap. A Textual worker (`@work(exclusive=True)`) calls `session.run`.
-3. Each tool fires `on_tool` so the TUI can print `→ read_file {path: ...}`, then resolves the path through the sandbox, then returns **text** (including `error: …`).
+2. You type a task. Input is **disabled** so two loops cannot overlap. A Textual worker (`@work(exclusive=True)`) calls `session.run_stream`.
+3. Each tool fires `on_tool` so the TUI can print `→ read_file {path: ...}`, then resolves the path through the sandbox, then returns **text** (including `error: …`). Mutating tools wait on the permission modal unless `--yes`.
 4. Tool results go back to the model until it answers.
-5. The TUI prints `agent: …` and re-enables input. API failures show as `error:`; history is kept.
+5. The TUI streams `agent: …` live and re-enables input. API failures show as `error:`; history is kept.
 
 ## Tools (loop details)
 
@@ -140,7 +140,6 @@ File tools resolve paths with `Path.resolve()` and reject anything whose resolve
 
 ## Known limitations
 
-- Token streaming is next (merge `run_stream` into the TUI)
 - No git awareness
 - No web search, MCP, or plugins
 - No transcript persistence across restarts
@@ -150,7 +149,7 @@ File tools resolve paths with `Path.resolve()` and reject anything whose resolve
 
 ## Possible improvements
 
-Highest leverage first, all on the same loop. Items 1–4 are merged (mkdir workspace, permission prompts + `--yes`, context hygiene / `search_text`). Streaming tokens is next.
+Highest leverage first, all on the same loop. Items 1–4 are merged (mkdir workspace, permission prompts + `--yes`, streaming TUI, context hygiene / `search_text`).
 
 5. **Git tools** (`git_status`, `git_diff`) so the model sees repo state.
 6. **Session persistence** (save/load PydanticAI message history).

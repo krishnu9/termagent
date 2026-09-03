@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -44,3 +46,20 @@ class CodingSession:
         )
         self.history = result.all_messages()
         return result.output
+
+    async def run_stream(
+        self,
+        prompt: str,
+        on_text: Callable[[str], None] | None = None,
+    ) -> str:
+        async with self.agent.run_stream(
+            prompt,
+            deps=self.deps,
+            message_history=self.history,
+        ) as result:
+            async for text in result.stream_text(delta=False, debounce_by=None):
+                if on_text is not None:
+                    on_text(text)
+            output = await result.get_output()
+            self.history = result.all_messages()
+            return output

@@ -84,6 +84,8 @@ class TermagentApp(App[None]):
         self.config = config
         self.title = "termagent"
         self.sub_title = f"{config.workspace}  {config.model}"
+        self.transcript: list[str] = []
+        self._live_agent = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -91,11 +93,28 @@ class TermagentApp(App[None]):
         yield Input(placeholder="Task, or /help", id="prompt")
 
     def on_mount(self) -> None:
-        self.query_one("#log", RichLog).write("Ready. Type a task or /help.")
+        self._log("Ready. Type a task or /help.")
         self.query_one("#prompt", Input).focus()
 
+    def _render_transcript(self) -> None:
+        log = self.query_one("#log", RichLog)
+        log.clear()
+        for message in self.transcript:
+            log.write(message)
+
     def _log(self, message: str) -> None:
+        self._live_agent = False
+        self.transcript.append(message)
         self.query_one("#log", RichLog).write(message)
+
+    def _set_agent_line(self, line: str) -> None:
+        if self._live_agent and self.transcript and self.transcript[-1].startswith("agent: "):
+            self.transcript[-1] = line
+            self._render_transcript()
+        else:
+            self.transcript.append(line)
+            self._live_agent = True
+            self.query_one("#log", RichLog).write(line)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         prompt = event.value.strip()
@@ -142,18 +161,30 @@ class TermagentApp(App[None]):
         done.wait()
         return box["ok"]
 
-    @work(exclusive=True, name="run_task")
+    def _on_text(self, text: str) -> None:
+        line = f"agent: {text}"
+        try:
+            self.call_from_thread(self._set_agent_line, line)
+        except RuntimeError:
+            self._set_agent_line(line)
+
+    @work(exclusive=True, name="run_task", exit_on_error=False)
     async def run_task(self, prompt: str) -> str:
         self.session.deps.on_tool = self._on_tool
         self.session.deps.approve = self.request_approval
-        return await self.session.run(prompt)
+        self._live_agent = False
+        return await self.session.run_stream(prompt, on_text=self._on_text)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if getattr(event.worker, "name", "") != "run_task":
             return
         prompt = self.query_one("#prompt", Input)
         if event.state == WorkerState.SUCCESS:
-            self._log(f"agent: {event.worker.result}")
+            result = event.worker.result
+            if result is not None and not (
+                self.transcript and self.transcript[-1].startswith("agent: ")
+            ):
+                self._log(f"agent: {result}")
             prompt.disabled = False
             prompt.focus()
         elif event.state == WorkerState.ERROR:
