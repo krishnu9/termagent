@@ -16,8 +16,10 @@ cp .env.example .env
 
 ```bash
 python -m termagent
-python -m termagent --workspace /path/to/repo
+python -m termagent --workspace ~/Developer/my-app
 ```
+
+With no flag, the workspace is the **current directory**. If the `--workspace` path does not exist, termagent creates it. That is enough to start a new project.
 
 `OPENAI_API_KEY` is required. `AGENT_MODEL` defaults to `gpt-4o-mini`. Any OpenAI-compatible provider works if you also set `OPENAI_BASE_URL` (see pydantic-ai OpenAI provider).
 
