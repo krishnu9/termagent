@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import re
+import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,6 +13,21 @@ from pydantic_ai import RunContext
 from termagent.sandbox import SandboxError, resolve_in_workspace
 
 SHELL_TIMEOUT = 30
+READ_FILE_MAX_CHARS = 100_000
+SEARCH_MAX_MATCHES = 50
+SEARCH_MAX_SNIPPET_CHARS = 200
+IGNORED_DIR_NAMES = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".pytest_cache",
+    }
+)
 
 
 @dataclass
@@ -27,12 +45,29 @@ def _error(exc: BaseException | str) -> str:
     return f"error: {exc}"
 
 
+def _is_ignored_dir_name(name: str) -> bool:
+    return name in IGNORED_DIR_NAMES or name.endswith(".egg-info")
+
+
 def read_file(ctx: RunContext[AgentDeps], path: str) -> str:
-    """Read a UTF-8 text file inside the workspace."""
+    """Read a UTF-8 text file inside the workspace.
+
+    Content is capped at READ_FILE_MAX_CHARS. Truncated files include a notice
+    with the cap so you can search or use the shell instead of assuming you
+    saw the whole file.
+    """
     _notify(ctx, "read_file", {"path": path})
     try:
         target = resolve_in_workspace(ctx.deps.workspace, path)
-        return target.read_text(encoding="utf-8")
+        text = target.read_text(encoding="utf-8")
+        if len(text) <= READ_FILE_MAX_CHARS:
+            return text
+        cap = READ_FILE_MAX_CHARS
+        notice = (
+            f"[truncated: file exceeds {cap} characters; showing first {cap}. "
+            "Use search_text or run_shell instead of assuming you saw the whole file.]"
+        )
+        return f"{notice}\n{text[:cap]}\n{notice}"
     except (SandboxError, OSError, UnicodeDecodeError) as exc:
         return _error(exc)
 
@@ -50,7 +85,11 @@ def write_file(ctx: RunContext[AgentDeps], path: str, content: str) -> str:
 
 
 def list_dir(ctx: RunContext[AgentDeps], path: str) -> str:
-    """List a directory inside the workspace. Each line is 'file' or 'dir' plus the name."""
+    """List a directory inside the workspace. Each line is 'file' or 'dir' plus the name.
+
+    Skips well-known junk by default: .git, node_modules, __pycache__, .venv,
+    venv, dist, build, .pytest_cache, and *.egg-info.
+    """
     _notify(ctx, "list_dir", {"path": path})
     try:
         target = resolve_in_workspace(ctx.deps.workspace, path)
@@ -58,6 +97,8 @@ def list_dir(ctx: RunContext[AgentDeps], path: str) -> str:
             return _error(NotADirectoryError(f"{path} is not a directory"))
         lines: list[str] = []
         for entry in sorted(target.iterdir(), key=lambda p: p.name):
+            if _is_ignored_dir_name(entry.name):
+                continue
             kind = "dir" if entry.is_dir() else "file"
             lines.append(f"{kind} {entry.name}")
         return "\n".join(lines) if lines else "(empty)"
@@ -87,4 +128,125 @@ def run_shell(ctx: RunContext[AgentDeps], command: str) -> str:
     except subprocess.TimeoutExpired as exc:
         return _error(f"timeout after {SHELL_TIMEOUT}s: {exc}")
     except OSError as exc:
+        return _error(exc)
+
+
+def _rg_globs() -> list[str]:
+    globs: list[str] = []
+    for name in sorted(IGNORED_DIR_NAMES):
+        globs.extend(["-g", f"!{name}/**"])
+    globs.extend(["-g", "!*.egg-info/**"])
+    return globs
+
+
+def _snippet(line: str) -> str:
+    stripped = line.rstrip("\n")
+    if len(stripped) <= SEARCH_MAX_SNIPPET_CHARS:
+        return stripped
+    return stripped[:SEARCH_MAX_SNIPPET_CHARS] + "…"
+
+
+def _rel(workspace: Path, path: Path) -> str:
+    return path.resolve().relative_to(workspace.resolve()).as_posix()
+
+
+def _search_with_rg(workspace: Path, start: Path, query: str) -> str | None:
+    rg = shutil.which("rg")
+    if rg is None:
+        return None
+    cmd = [
+        rg,
+        "-n",
+        "--hidden",
+        "--no-heading",
+        "--color",
+        "never",
+        *_rg_globs(),
+        "--",
+        query,
+        str(start),
+    ]
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=workspace.resolve(),
+            capture_output=True,
+            text=True,
+            timeout=SHELL_TIMEOUT,
+        )
+    except OSError:
+        return None
+    if completed.returncode not in (0, 1):
+        err = (completed.stderr or completed.stdout or "rg failed").strip()
+        return _error(err)
+    lines = [line for line in (completed.stdout or "").splitlines() if line]
+    clipped: list[str] = []
+    for line in lines[:SEARCH_MAX_MATCHES]:
+        clipped.append(_snippet(line))
+    if not clipped:
+        return "(no matches)"
+    extra = ""
+    if len(lines) > SEARCH_MAX_MATCHES:
+        extra = f"\n[truncated: showing {SEARCH_MAX_MATCHES} of {len(lines)}+ matches]"
+    return "\n".join(clipped) + extra
+
+
+def _iter_search_files(start: Path) -> Iterator[Path]:
+    if start.is_file():
+        yield start
+        return
+    for root, dirs, files in os.walk(start):
+        dirs[:] = [d for d in dirs if not _is_ignored_dir_name(d)]
+        for name in files:
+            yield Path(root) / name
+
+
+def _search_with_python(workspace: Path, start: Path, query: str) -> str:
+    try:
+        pattern = re.compile(query)
+    except re.error as exc:
+        return _error(f"invalid regex: {exc}")
+    matches: list[str] = []
+    over_cap = False
+    for file_path in _iter_search_files(start):
+        if any(_is_ignored_dir_name(part) for part in file_path.relative_to(workspace.resolve()).parts):
+            continue
+        try:
+            text = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        rel = _rel(workspace, file_path)
+        for i, line in enumerate(text.splitlines(), start=1):
+            if pattern.search(line):
+                matches.append(_snippet(f"{rel}:{i}:{line}"))
+                if len(matches) >= SEARCH_MAX_MATCHES:
+                    over_cap = True
+                    break
+        if over_cap:
+            break
+    if not matches:
+        return "(no matches)"
+    extra = f"\n[truncated: showing {SEARCH_MAX_MATCHES} matches]" if over_cap else ""
+    return "\n".join(matches) + extra
+
+
+def search_text(ctx: RunContext[AgentDeps], query: str, path: str = ".") -> str:
+    """Search workspace files for a regex/query string.
+
+    Prefers ripgrep (`rg`) when it is on PATH; otherwise walks files in Python.
+    Skips the same junk directories as list_dir (.git, node_modules, __pycache__,
+    .venv, venv, dist, build, .pytest_cache, *.egg-info). Caps matches and
+    line snippet length so results stay small.
+    """
+    _notify(ctx, "search_text", {"query": query, "path": path})
+    try:
+        start = resolve_in_workspace(ctx.deps.workspace, path)
+        if not start.exists():
+            return _error(FileNotFoundError(path))
+        workspace = ctx.deps.workspace.resolve()
+        rg_result = _search_with_rg(workspace, start, query)
+        if rg_result is not None:
+            return rg_result
+        return _search_with_python(workspace, start, query)
+    except (SandboxError, OSError) as exc:
         return _error(exc)

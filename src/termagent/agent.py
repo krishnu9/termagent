@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.models import Model
 
-from termagent.tools import AgentDeps, list_dir, read_file, run_shell, write_file
+from termagent.tools import AgentDeps, list_dir, read_file, run_shell, search_text, write_file
 
 INSTRUCTIONS = """You are a coding agent working in a local workspace.
 Use tools to inspect and edit files. Stay inside the workspace.
@@ -15,7 +15,7 @@ def build_agent(model: str | Model) -> Agent[AgentDeps, str]:
         model,
         deps_type=AgentDeps,
         instructions=INSTRUCTIONS,
-        tools=[read_file, write_file, list_dir, run_shell],
+        tools=[read_file, write_file, list_dir, search_text, run_shell],
     )
 
 
